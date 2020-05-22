@@ -67,7 +67,7 @@ param (
     [string] $UserAgent = 'Mozilla/5.0 PowerShell (PS-Wayback-Save)',
     [ValidateSet("GET","POST")]
     [string] $Method = "POST",
-    [int] $BackoffSeconds = 60,
+    [double] $BackoffSeconds = 60,
     [int] $Retry = 3,
     [ValidateRange(1, 100)]
     [int] $RetryBackOffPercent = 50,
@@ -110,7 +110,7 @@ function Invoke-WebRequestWrapper {
     param (
         $Url = $u,
         $Parameters = $Params_InvokeReq,
-        [int] $BackoffSeconds = $BackoffSeconds,
+        [double] $BackoffSeconds = $BackoffSeconds,
         [int] $Retry = 3,
         [ValidateRange(1, 100)]
         [int] $RetryBackOffPercent = 50,
@@ -129,7 +129,7 @@ function Invoke-WebRequestWrapper {
         if ($Retry -ge 0) {
             Write-InfoLog -Message "$_"
             Write-InfoLog -Message "Retries remaining: $Retry"
-            Start-Sleep -Seconds $BackoffSeconds
+            [System.Threading.Thread]::Sleep($BackoffSeconds * 1000)
             $BackoffSeconds = $BackoffSeconds * ($RetryBackOffPercent / 100)
             Invoke-WebRequestWrapper -Url $Url -Parameters $Parameters -BackoffSeconds $BackoffSeconds -Retry $Retry
             return
@@ -163,7 +163,7 @@ function Invoke-WebRequestWrapper {
         $Retry--
         if ($Retry -ge 0) {
             Write-InfoLog -Message "Retries remaining: $Retry"
-            Start-Sleep -Seconds $BackoffSeconds
+            [System.Threading.Thread]::Sleep($BackoffSeconds * 1000)
             $BackoffSeconds = $BackoffSeconds * ($RetryBackOffPercent / 100)
             Invoke-WebRequestWrapper -Url $Url -Parameters $Parameters -BackoffSeconds $BackoffSeconds -Retry $Retry
             return
@@ -180,7 +180,7 @@ function Invoke-WebRequestWrapper {
 
     if ($RandomWaitSeconds) {
         $RandWaitMs = $RandomWaitSeconds * 1000 * (Get-Random -Minimum 0.5 -Maximum 1.5)
-        Start-Sleep -Milliseconds $RandWaitMs
+        [System.Threading.Thread]::Sleep($RandWaitMs)
     }
     return $Response
 }
