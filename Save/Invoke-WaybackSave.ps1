@@ -33,7 +33,7 @@
     Saves PSCustomObject, including WebResponseObject, to variable $WaybackSaves for later review.
 
 .EXAMPLE
-    ps> $UrlArray = Import-Csv -Path "MyUrls.csv"
+    PS> $UrlArray = Import-Csv -Path "MyUrls.csv"
     PS> .\Invoke-WaybackSave.ps1 -Url $UrlArray -Method POST -BackoffSeconds 60 -InformationAction Continue -Verbose
 
     [2020-12-31 23:55:01.045] [1] Saving URL:    https://sub1.example.domain/
@@ -72,7 +72,7 @@ param (
     [ValidateRange(1, 100)]
     [int] $RetryBackOffPercent = 50,
     [ValidateRange(1, [int]::MaxValue)]
-    [double] $RandomWaitSeconds = 2,
+    [double] $RandomWaitSeconds = 2.5,
     [switch] $SaveResponse,
     [switch] $ShowProgress,
     $LogPath = $null
@@ -118,10 +118,28 @@ function Invoke-WebRequestWrapper {
         [int] $RandomWaitSeconds = $RandomWaitSeconds
     )
 
+    $http_retry = @(404, 408, 425, 429, 500, 502, 503, 504)
+
     try {
         $Response = Invoke-WebRequest @Parameters
     }
-    catch {
+    catch [System.Net.Sockets.SocketException] {
+        # Retry request with new backoff time
+        $Retry--
+        if ($Retry -ge 0) {
+            Write-InfoLog -Message "$_"
+            Write-InfoLog -Message "Retries remaining: $Retry"
+            Start-Sleep -Seconds $BackoffSeconds
+            $BackoffSeconds = $BackoffSeconds * ($RetryBackOffPercent / 100)
+            Invoke-WebRequestWrapper -Url $Url -Parameters $Parameters -BackoffSeconds $BackoffSeconds -Retry $Retry
+            return
+        }
+        else {
+            Write-InfoLog -Message "Retry limit reached. Skipping..."
+            return $_.Exception
+        }
+    }
+    catch [System.Net.Http.HttpRequestException] {
         # Check for "Retry-After" header to wait; Otherwise, wait for an arbitrary amount of time (BackoffSeconds)
         # If not an HTTP 429 error, return that response and do not retry
         $status_descr = $_.Exception.Response.ReasonPhrase
@@ -129,27 +147,35 @@ function Invoke-WebRequestWrapper {
         Write-Warning "Response Status: $status_code $status_descr"
         $retry_after = $_.Exception.Response.Headers["Retry-After"]
         if ( ($status_code -eq 429) -and $retry_after) {
-                Write-InfoLog -Message "Retry After: $retry_after"
-                Write-Warning "Retry After: $retry_after"
-                Start-Sleep -Seconds $retry_after
+            Write-InfoLog -Message "Retry After: $retry_after"
+            Write-Warning "Retry After: $retry_after"
+            $BackoffSeconds = $retry_after
+        }
+        elseif ($status_code -in $http_retry) {
+            Write-InfoLog -Message "Waiting seconds: $BackoffSeconds"
+            Write-Warning "Waiting seconds: $BackoffSeconds"
         }
         else {
-            $wait_seconds = $BackoffSeconds
-            Write-InfoLog -Message "Waiting seconds: $wait_seconds"
-            Write-Warning "Waiting seconds: $wait_seconds"
-            Start-Sleep -Seconds $wait_seconds
+            $Retry = 0
         }
 
         # Retry request with new backoff time
         $Retry--
         if ($Retry -ge 0) {
+            Write-InfoLog -Message "Retries remaining: $Retry"
+            Start-Sleep -Seconds $BackoffSeconds
             $BackoffSeconds = $BackoffSeconds * ($RetryBackOffPercent / 100)
             Invoke-WebRequestWrapper -Url $Url -Parameters $Parameters -BackoffSeconds $BackoffSeconds -Retry $Retry
             return
         }
         else {
+            Write-InfoLog -Message "Retry limit reached. Skipping..."
             return $_.Exception.Response
         }
+    }
+    catch {
+        Write-InfoLog -Message "Uncaught exception! Skipping..."
+        return $_.Exception
     }
 
     if ($RandomWaitSeconds) {
