@@ -51,22 +51,31 @@ param (
     [array] $FormatList = @('original','mimetype','timestamp','endtimestamp','groupcount','uniqcount'),
     [string] $Filter = '!statuscode:[45]..',
     [int] $Limit = 100000,
-    [string] $UserAgent = 'Mozilla/5.0',
+    [string] $UserAgent = 'Mozilla/5.0 PowerShell (PS-Wayback-Save)',
     [switch] $ConvertTimestamp
 )
 
 function Convert-Timestamp {
     param (
         [ValidateNotNullOrEmpty()]
-        [string[]] $Timestamp,
-        [string] $DateFormat = "yyyyMMddHHmmss"
+        $TimeMap = $TimeMap,
+        [string]$DateFormat = 'yyyyMMddHHmmss',
+        $TimestampNames = @("timestamp", "endtimestamp")
     )
 
-    $DateTime = foreach ($t in $Timestamp) {
-        # Given timestamps are in format: yyyyMMddHHmmss
-        [datetime]::ParseExact($t, $DateFormat, [cultureinfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal)
+    # Loop through each defined timestamp header
+    foreach ($TSName in $TimestampNames) {
+        # Check if timestamp header exists
+        if ($Timemap.$TSName) {
+            # Add new member to the object containing the converted timestamps
+            $TSName_Converted = "$TSName`_datetime"
+            $Timemap | Add-Member -Name $TSName_Converted -Value $null -MemberType NoteProperty
+            # Set converted timestamp member for each object in the Timemap
+            foreach ($obj in $Timemap) {
+                $obj.$TSName_Converted = [datetime]::ParseExact($obj.$TSName, 'yyyyMMddHHmmss', [cultureinfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal)
+            }
+        }
     }
-    return $DateTime
 }
 
 function Add-HttpQueryString {
@@ -178,20 +187,8 @@ $AllTimestampNames = @(
 
 $Timemap = Invoke-WaybackTimemap @Params_InvokeWaybackTimemap
 
-if ($ConvertTimestamp) {
-    # Loop through each defined timestamp header
-    foreach ($TSName in $AllTimestampNames) {
-        # Check if timestamp header exists
-        if ($Timemap.$TSName) {
-            # Add new member to the object containing the converted timestamps
-            $TSName_Converted = "$TSName`_datetime"
-            # Set converted timestamp member for each object in the Timemap
-            foreach ($obj in $Timemap) {
-                $converted = Convert-Timestamp -Timestamp $obj.$TSName
-                Add-Member -InputObject $obj -Name $TSName_Converted -Value $converted -MemberType NoteProperty
-            }
-        }
-    }
+if ($Timemap -and $ConvertTimestamp) {
+    Convert-Timestamp -TimeMap $Timemap -TimestampNames $AllTimestampNames
 }
 
 return $Timemap
