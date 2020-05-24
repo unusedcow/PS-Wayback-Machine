@@ -62,8 +62,12 @@
 
 [CmdletBinding()]
 param (
+    [Parameter(ParameterSetName="InputUrl")]
     [ValidateNotNullOrEmpty()]
     [uri[]] $Url,
+    [Parameter(ParameterSetName="InputFile")]
+    [ValidateNotNullOrEmpty()]
+    [System.IO.FileInfo] $InFile,
     [string] $UserAgent = 'Mozilla/5.0 PowerShell (PS-Wayback-Save)',
     [ValidateSet("GET","POST")]
     [string] $Method = "POST",
@@ -223,12 +227,27 @@ $Headers = @{
     "TE" = 'trailers'
 }
 
+if ($Url) {
+    Write-InfoLog "Received array of URLs to save"
+}
+elseif ($InFile) {
+    if ($InFile.Exists) {
+        Write-InfoLog "Reading contents of file: $InFile"
+        [uri[]] $Url = Get-Content -Path $InFile
+    }
+    else {
+        Write-InfoLog "Input file does not exist: $InFile"
+        break
+    }
+}
+
 # List to get partial responses in case of cancel (i.e. Ctrl+C)
 $total = $Url.Count
 $counter = 0
 $ListOut = New-Object -TypeName 'System.Collections.Generic.List[System.Object]' -ArgumentList $total
 
 try {
+    Write-InfoLog "Saving [$total] URLs to Wayback Machine"
     foreach ($u in $Url) {
         try {
             $save_url = "https://web.archive.org/save/$u"
