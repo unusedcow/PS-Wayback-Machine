@@ -142,10 +142,12 @@ function Invoke-WebRequestWrapper {
     catch [System.Net.Http.HttpRequestException] {
         # Check for "Retry-After" header to wait; Otherwise, wait for an arbitrary amount of time (BackoffSeconds)
         # If not an HTTP 429 error, return that response and do not retry
-        $status_descr = $_.Exception.Response.ReasonPhrase
-        $status_code = $_.Exception.Response.StatusCode.value__
-        Write-Warning "Response Status: $status_code $status_descr"
-        $retry_after = $_.Exception.Response.Headers["Retry-After"]
+        if ($_.Exception.Response) {
+            $status_descr = $_.Exception.Response.ReasonPhrase
+            $status_code = $_.Exception.Response.StatusCode.value__
+            Write-Warning "Response Status: $status_code $status_descr"
+            $retry_after = $_.Exception.Response.Headers["Retry-After"]
+        }
         if ( ($status_code -eq 429) -and $retry_after) {
             Write-InfoLog -Message "Retry After: $retry_after"
             Write-Warning "Retry After: $retry_after"
@@ -192,10 +194,11 @@ function New-LogFile {
 
     if ($LogPath) {
         if (Test-Path -Path $LogPath -PathType Leaf) {
-            Write-Warning  "Overwriting existing file at: $LogPath"
+            Write-Warning  "Existing log file at: $LogPath"
+            return
         }
         try {
-            Write-Host "Creating new file at: $LogPath"
+            Write-Host "Creating new log file at: $LogPath"
             New-Item -Path $LogPath -ItemType File -Force -ErrorAction Stop > $null
         }
         catch {
