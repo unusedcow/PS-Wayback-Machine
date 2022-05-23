@@ -69,7 +69,7 @@ param (
     [ValidateNotNullOrEmpty()]
     [System.IO.FileInfo] $InFile,
     [string] $UserAgent = 'Mozilla/5.0 PowerShell (PS-Wayback-Save)',
-    [ValidateSet("GET","POST")]
+    [ValidateSet("GET","POST","HEAD")]
     [string] $Method = "POST",
     [double] $BackoffSeconds = 60,
     [int] $Retry = 3,
@@ -88,7 +88,7 @@ function Write-InfoLog {
         [System.IO.FileInfo] $LogPath = $script:LogPath
     )
 
-    $timestamp = [datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss.fff')
+    $timestamp = [datetime]::UtcNow.ToString("o")
     $msg = "[$timestamp] $Message"
     if ($LogPath) {
         Write-Information -MessageData $msg -InformationAction Continue
@@ -122,10 +122,14 @@ function Invoke-WebRequestWrapper {
         [int] $RandomWaitSeconds = $RandomWaitSeconds
     )
 
-    $http_retry = @(404, 408, 425, 429, 500, 502, 503, 504)
+    $http_retry = @(403, 408, 425, 429, 500, 502, 503, 504)
 
     try {
         $Response = Invoke-WebRequest @Parameters
+        Write-InfoLog -Message "Status code: $($Response.StatusCode)"
+        if ($Response.StatusCode -like "2[0-9][0-9]") {
+            Write-InfoLog -Message "Success: $Url"
+        }
     }
     catch [System.Net.Sockets.SocketException] {
         # Retry request with new backoff time
@@ -153,9 +157,11 @@ function Invoke-WebRequestWrapper {
             $retry_after = $_.Exception.Response.Headers["Retry-After"]
         }
         if ( ($status_code -eq 429) -and $retry_after) {
-            Write-InfoLog -Message "Retry After: $retry_after"
-            Write-Warning "Retry After: $retry_after"
-            $BackoffSeconds = $retry_after
+            Write-InfoLog -Message "Retry-After: $retry_after"
+            Write-Warning "Retry-After: $retry_after"
+            # Extract seconds in case of multiple Retry-After response
+            $BackoffSeconds = $retry_after | Where-Object {$_ -match "^\d+$"} | Select-Object -First 1
+            Write-InfoLog "BackoffSeconds set to: $BackoffSeconds"
         }
         elseif ($status_code -in $http_retry) {
             Write-InfoLog -Message "Waiting seconds: $BackoffSeconds"
@@ -181,6 +187,7 @@ function Invoke-WebRequestWrapper {
     }
     catch {
         Write-InfoLog -Message "Uncaught exception! Skipping..."
+        Write-InfoLog $_.Exception
         return $_.Exception
     }
 
@@ -218,11 +225,9 @@ function New-LogFile {
 
 New-LogFile -LogPath $LogPath
 
-$Headers = @{
+$Req_Headers = @{
     "Accept" = 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
     "Accept-Encoding" = 'gzip, deflate, br'
-    "Accept-Language" = 'en-US,en;q=0.5'
-    "DNT" = 1
     "Referer" = "https://web.archive.org.org/save"
     "TE" = 'trailers'
 }
@@ -252,28 +257,29 @@ try {
         try {
             $save_url = "https://web.archive.org/save/$u"
             $websession1 = [Microsoft.PowerShell.Commands.WebRequestSession]::new()
-            $Req_Body = @{
-                url = $u
-                capture_all = "on"
-                #capture_outlinks = "on"
-                #capture_screen = "on"
-            }
 
             $Params_InvokeReq = @{
                 Method = $Method
                 Uri = $save_url
                 UserAgent = $UserAgent
-                Headers  = $Headers
-                ContentType = 'application/x-www-form-urlencoded'
                 WebSession = $websession1
                 Verbose = $false
             }
 
             switch ($Method) {
                 "POST" {
+                    $Req_Body = @{  
+                        url = $u
+                        capture_all = "on"
+                        #capture_outlinks = "on"
+                        #capture_screen = "on"
+                    }
+                    $Params_InvokeReq["Headers"] = $Req_Headers
                     $Params_InvokeReq["Body"] = $Req_Body
+                    $Params_InvokeReq["ContentType"] = 'application/x-www-form-urlencoded'
                 }
                 "GET" { }
+                "HEAD" { }
                 Default { }
             }
 
@@ -282,7 +288,7 @@ try {
                 $prog_percent = [System.Math]::Round(($counter / $total) * 100, 2)
                 Write-Progress -Activity "Saving URLs to Wayback Machine" -PercentComplete $prog_percent -Status "Percent Complete ($counter of $total): $prog_percent%" -CurrentOperation "Saving URL: $u"
             }
-            Write-InfoLog "[$counter] Saving URL:`t$u"
+            Write-InfoLog "[$counter of $($URL.Count)] Saving URL:`t$u"
             Write-Verbose "[$counter] Wayback URL:`t$($Params_InvokeReq.Uri)"
             $Resp = Invoke-WebRequestWrapper -Url $u -Parameters $Params_InvokeReq -BackoffSeconds $BackoffSeconds -Retry $Retry -RetryBackOffPercent $RetryBackOffPercent
         }
@@ -293,7 +299,7 @@ try {
                     Response = $Resp
                 }
             }
-            else {
+            elseif ($Resp.StatusCode -like "2[0-9][0-9]") {
                 $temp = $u.ToString()
             }
 
